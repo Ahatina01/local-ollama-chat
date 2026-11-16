@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111214">
+  <title>Локальный Ollama чат</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">◉</span><span>Локальный чат</span></div>
+      <button class="new-chat" id="newChat"><span>＋</span> Новый чат</button>
+      <div class="history-label">История</div>
+      <nav id="chatList" class="chat-list" aria-label="История чатов"></nav>
+      <div class="sidebar-foot"><span class="local-dot"></span> Только на этом компьютере</div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">Ollama <span class="local-badge">ЛОКАЛЬНО</span></div>
+        <div class="model-wrap"><label for="modelSelect">Модель</label><select id="modelSelect" aria-label="Выбрать локальную модель"></select></div>
+      </header>
+      <section class="conversation" id="conversation">
+        <div class="welcome" id="welcome">
+          <div class="welcome-orb">◉</div>
+          <h1>С чего начнём?</h1>
+          <p>Сообщения обрабатываются локальной моделью на вашем компьютере.</p>
+        </div>
+        <div class="messages" id="messages" aria-live="polite"></div>
+      </section>
+      <div class="composer-area">
+        <form id="chatForm" class="composer">
+          <textarea id="prompt" rows="1" placeholder="Спросите что-нибудь…" aria-label="Сообщение" required></textarea>
+          <button id="sendButton" class="send-button" type="submit" aria-label="Отправить сообщение"><svg viewBox="0 0 24 24"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button>
+        </form>
+        <div class="composer-note">Локальный запуск · Никаких облачных API</div>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
+
