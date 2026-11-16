@@ -1,0 +1,7 @@
+config.local.json
+history.json
+history.json.tmp
+*.log
+node_modules/
+.DS_Store
+
