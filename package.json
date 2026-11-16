@@ -1,0 +1,14 @@
+{
+  "name": "local-ollama-chat",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Lightweight local browser chat for Ollama with streaming and saved conversation history",
+  "scripts": {
+    "start": "node launcher.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+
