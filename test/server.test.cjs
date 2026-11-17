@@ -43,3 +43,8 @@ test('persists and reads conversation history', () => {
   }
 });
 
+test('passes bounded context options to Ollama chat requests', () => {
+  const { normalizeChatOptions } = require('../server.js');
+  assert.deepEqual(normalizeChatOptions({ num_ctx: 8192, num_predict: 500, temperature: 0.1 }), { num_ctx: 8192, num_predict: 500 });
+});
+
