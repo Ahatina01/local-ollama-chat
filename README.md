@@ -11,6 +11,10 @@ A lightweight, local-only browser chat for Ollama. It streams responses, lists i
 
 The app reads installed models from Ollama's `/api/tags`, forwards streaming requests to `/api/chat`, and saves chat history in `history.json` beside the app. Both `config.local.json` and `history.json` are excluded from Git.
 
+## Long documents
+
+Messages of 4,500 characters or more are analyzed automatically in overlapping parts. The app collects notes from every part, combines them into a clear overall analysis, and keeps a compact document context for follow-up questions. The original text remains in the local chat history; it is not sent to a cloud service.
+
 ## Development
 
 ```sh
