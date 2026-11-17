@@ -31,6 +31,17 @@ function normalizeModels(payload) {
     .filter((name) => typeof name === 'string' && name.length > 0);
 }
 
+function normalizeChatOptions(options = {}) {
+  const safe = {};
+  if (Number.isInteger(options.num_ctx) && options.num_ctx >= 4096 && options.num_ctx <= 65536) {
+    safe.num_ctx = options.num_ctx;
+  }
+  if (Number.isInteger(options.num_predict) && options.num_predict >= 1 && options.num_predict <= 4096) {
+    safe.num_predict = options.num_predict;
+  }
+  return safe;
+}
+
 function readHistory(file = HISTORY_FILE) {
   try {
     const content = fs.readFileSync(file, 'utf8');
@@ -124,7 +135,12 @@ async function handle(request, response) {
     const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: body.model, messages: body.messages, stream: true }),
+      body: JSON.stringify({
+        model: body.model,
+        messages: body.messages,
+        options: normalizeChatOptions(body.options),
+        stream: true,
+      }),
     });
     if (!upstream.ok) {
       const message = await upstream.text();
@@ -169,5 +185,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { loadConfig, normalizeModels, readHistory, writeHistory, createServer };
+module.exports = { loadConfig, normalizeModels, normalizeChatOptions, readHistory, writeHistory, createServer };
 
