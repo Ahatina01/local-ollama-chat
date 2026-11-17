@@ -10,6 +10,11 @@ let activeId = null;
 let models = [];
 let busy = false;
 let saveTimer;
+const LONG_TEXT_THRESHOLD_CHARS = 4500;
+const DOCUMENT_CHUNK_CHARS = 4500;
+const DOCUMENT_CHUNK_OVERLAP = 250;
+const CHAT_OPTIONS = { num_ctx: 8192, num_predict: 1800 };
+const CHUNK_OPTIONS = { num_ctx: 8192, num_predict: 500 };
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -55,6 +60,7 @@ function render() {
     conversation.scrollTop = conversation.scrollHeight;
   }
   modelSelect.value = chat?.model || modelSelect.value;
+  modelSelect.disabled = busy;
   promptBox.disabled = busy;
   sendButton.disabled = busy || !promptBox.value.trim() || models.length === 0;
 }
@@ -74,6 +80,12 @@ function showToast(message) {
   toast.classList.add('show');
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove('show'), 4500);
+}
+function setProgress(message) {
+  const toast = document.querySelector('#toast');
+  clearTimeout(showToast.timer);
+  toast.textContent = message;
+  toast.classList.add('show');
 }
 function newChat() {
   const chat = { id: crypto.randomUUID(), title: 'Новый чат', model: modelSelect.value || models[0] || '', messages: [], updatedAt: Date.now() };
@@ -114,6 +126,103 @@ async function loadHistory() {
     activeId = history[0]?.id || null;
   } catch { history = []; }
 }
+
+async function requestChat(model, messages, options, onText = () => {}) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages, options }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Ошибка генерации');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  let result = '';
+  const consume = (line) => {
+    if (!line.trim()) return;
+    const chunk = JSON.parse(line);
+    if (chunk.error) throw new Error(chunk.error);
+    const text = chunk.message?.content || '';
+    result += text;
+    if (text) onText(text);
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = pending.split('\n');
+    pending = lines.pop();
+    for (const line of lines) consume(line);
+    if (done) break;
+  }
+  if (pending.trim()) consume(pending);
+  return result;
+}
+
+async function compactPartNotes(notes, model) {
+  let level = notes;
+  while (level.length > 4) {
+    const next = [];
+    for (let index = 0; index < level.length; index += 5) {
+      const group = level.slice(index, index + 5);
+      setProgress(`Собираю выводы по частям: ${Math.min(index + group.length, level.length)} из ${level.length}…`);
+      const summary = await requestChat(model, [
+        { role: 'system', content: 'Сожми заметки по частям документа в точный промежуточный конспект. Сохрани конкретные факты, имена, числа, причинно-следственные связи, противоречия и номера частей. Ничего не додумывай. До 450 слов.' },
+        { role: 'user', content: group.join('\n\n') },
+      ], { num_ctx: 8192, num_predict: 650 });
+      next.push(summary.trim());
+    }
+    level = next;
+  }
+  return level;
+}
+
+async function analyzeLongText(source, chat, model, answer) {
+  const chunks = OllamaChatUtils.splitLongText(source, { maxChars: DOCUMENT_CHUNK_CHARS, overlap: DOCUMENT_CHUNK_OVERLAP });
+  const notes = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const current = chunks[index];
+    setProgress(`Разбираю длинный текст: часть ${index + 1} из ${chunks.length}…`);
+    answer.content = `Идёт полный разбор документа… ${index + 1}/${chunks.length}`;
+    render();
+    queueSave();
+    const taskReminder = index > 0 && notes[0]
+      ? `\nЗадача/начальный контекст из первой части:\n${notes[0].slice(0, 1200)}`
+      : '';
+    const previousContext = index === 0 && chat.documentSummary
+      ? `\nКраткий контекст предыдущего разбора в этом чате:\n${chat.documentSummary.slice(0, 2000)}`
+      : '';
+    const note = await requestChat(model, [
+      {
+        role: 'system',
+        content: `Ты внимательно анализируешь фрагмент ${index + 1} из ${chunks.length} одного длинного документа. На первом фрагменте определи, есть ли в начале отдельная задача пользователя, и отрази её в заметках. Сохраняй важные факты, имена, даты, числа, аргументы, причинные связи и неоднозначности. Не выдумывай и не повторяй текст целиком. На последующих фрагментах держись задачи из первой части. Это промежуточные заметки для итогового полного и понятного разбора.${taskReminder}${previousContext}`,
+      },
+      { role: 'user', content: current.text },
+    ], CHUNK_OPTIONS);
+    notes.push(`Часть ${index + 1}/${chunks.length}:\n${note.trim()}`);
+  }
+
+  const compactNotes = await compactPartNotes(notes, model);
+  chat.documentSummary = compactNotes.join('\n\n').slice(0, 5000);
+  answer.content = '';
+  render();
+  setProgress('Объединяю части в полный разбор…');
+  await requestChat(model, [
+    {
+      role: 'system',
+      content: 'Подготовь полный, подробный и понятный разбор длинного текста по заметкам всех его частей. Выполни задачу пользователя, если она отражена в заметках. Объедини повторяющиеся темы, сохрани существенные конкретные детали, отделяй факты от выводов, отмечай противоречия и неопределённость. Не утверждай, что видел исходный текст целиком: работай по заметкам частей.',
+    },
+    { role: 'user', content: compactNotes.join('\n\n') },
+  ], { num_ctx: 8192, num_predict: 1800 }, (delta) => {
+    answer.content += delta;
+    render();
+    queueSave();
+  });
+  if (!answer.content.trim()) throw new Error('Модель не вернула итоговый разбор.');
+}
+
 async function sendMessage(event) {
   event?.preventDefault();
   const content = promptBox.value.trim();
@@ -128,43 +237,29 @@ async function sendMessage(event) {
   promptBox.value = '';
   promptBox.style.height = 'auto';
   chat.messages.push({ role: 'assistant', content: '' });
+  const answer = chat.messages[chat.messages.length - 1];
   busy = true;
   render();
   queueSave();
   try {
-    const response = await fetch('/api/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: chat.messages.slice(0, -1) }),
-    });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Ошибка генерации');
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      pending += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = pending.split('\n');
-      pending = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const chunk = JSON.parse(line);
-        chat.messages[chat.messages.length - 1].content += chunk.message?.content || '';
+    if (content.length >= LONG_TEXT_THRESHOLD_CHARS) {
+      await analyzeLongText(content, chat, model, answer);
+      showToast('Готово — все части разобраны и объединены.');
+    } else {
+      const context = OllamaChatUtils.buildConversationMessages(
+        chat.messages.slice(0, -1),
+        chat.documentSummary || '',
+      );
+      await requestChat(model, context, CHAT_OPTIONS, (delta) => {
+        answer.content += delta;
         render();
         queueSave();
-      }
-      if (done) break;
-    }
-    if (pending.trim()) {
-      const chunk = JSON.parse(pending);
-      chat.messages[chat.messages.length - 1].content += chunk.message?.content || '';
+      });
     }
     chat.updatedAt = Date.now();
   } catch (error) {
-    const answer = chat.messages[chat.messages.length - 1];
     answer.content = answer.content ? `${answer.content}\n\nОшибка: ${error.message}` : `Ошибка: ${error.message}`;
+    showToast(error.message);
   } finally {
     busy = false;
     render();
